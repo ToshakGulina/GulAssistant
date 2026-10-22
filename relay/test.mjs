@@ -23,6 +23,15 @@ const upstream = http.createServer((req, res) => {
   req.on("data", (chunk) => (body += chunk));
   req.on("end", () => {
     receivedBody = body;
+    if (req.url === "/openai/v1/audio/transcriptions") {
+      const boundary = "gulboundary";
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({
+        text: "проверка",
+        saw_content_type: (req.headers["content-type"] || "").includes("multipart/form-data"),
+      }));
+      return;
+    }
     if (req.url === "/openai/v1/models") {
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify({ object: "list", data: [{ id: "openai/gpt-oss-20b" }] }));
@@ -122,6 +131,25 @@ await ok("короткий путь /models тоже работает", async ()
   assert.equal(response.status, 200);
   const data = await response.json();
   assert.equal(data.data[0].id, "openai/gpt-oss-20b");
+});
+
+await ok("распознавание речи проходит через релей с multipart", async () => {
+  const form = new FormData();
+  form.append("model", "whisper-large-v3-turbo");
+  form.append("file", new Blob([new Uint8Array([1, 2, 3])], { type: "audio/wav" }), "cmd.wav");
+  const response = await worker.fetch(
+    new Request("https://relay.example/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RELAY_TOKEN}` },
+      body: form,
+    }),
+    env,
+  );
+  assert.equal(response.status, 200);
+  const data = await response.json();
+  assert.equal(data.text, "проверка");
+  // Content-Type с boundary должен дойти до Groq без подмены.
+  assert.equal(data.saw_content_type, true);
 });
 
 await ok("посторонний путь — 404", async () => {

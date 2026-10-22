@@ -8,6 +8,7 @@
  * Что делает:
  *   POST /openai/v1/chat/completions  → api.groq.com/openai/v1/chat/completions
  *   GET  /openai/v1/models            → список моделей (проверка ключа)
+ *   POST /openai/v1/audio/transcriptions → Whisper (резервное распознавание)
  *   GET  /health                      → состояние релея (без секретов)
  *
  * Стриминг SSE пробрасывается как есть, поэтому потоковая озвучка Гуля
@@ -24,6 +25,8 @@ const upstreamOrigin = (env) => env.GROQ_ORIGIN || GROQ_ORIGIN;
 const ALLOWED = [
   /^openai\/v1\/chat\/completions$/,
   /^openai\/v1\/models$/,
+  // Резервное распознавание речи: тот же ключ Groq, отдельный сервис не нужен.
+  /^openai\/v1\/audio\/transcriptions$/,
 ];
 
 const CORS = {
@@ -56,6 +59,7 @@ export default {
         key_configured: Boolean(env.GROQ_API_KEY),
         token_required: Boolean(env.RELAY_TOKEN),
         upstream: upstreamOrigin(env),
+        audio: true,
       });
     }
 
@@ -90,7 +94,14 @@ export default {
 
     const headers = new Headers();
     headers.set("Authorization", `Bearer ${env.GROQ_API_KEY}`);
-    headers.set("Content-Type", "application/json");
+    // Для загрузки аудио (multipart/form-data) границу задаёт клиент —
+    // подменять Content-Type нельзя, иначе Groq не разберёт файл.
+    const contentType = request.headers.get("Content-Type");
+    if (contentType) {
+      headers.set("Content-Type", contentType);
+    } else {
+      headers.set("Content-Type", "application/json");
+    }
     headers.set("Accept", request.headers.get("Accept") || "text/event-stream");
     headers.set("User-Agent", "GulAssistant-relay/1.0");
 

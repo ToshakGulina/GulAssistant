@@ -463,6 +463,7 @@ bash scripts/test.sh
 - [docs/LATENCY.md](docs/LATENCY.md) — бюджет задержки и способы её уменьшить
 - [docs/DEVBOX.md](docs/DEVBOX.md) — тестовый стенд на своём ПК и перенос на Acer
 - [docs/GROQ.md](docs/GROQ.md) — Groq первым мозгом: релей, прокси, лимиты
+- [docs/API_KEYS.md](docs/API_KEYS.md) — какие ключи и аккаунты нужны (и какие не нужны)
 
 ## Лицензия
 

@@ -149,3 +149,138 @@ def test_mic_test_accepts_good_signal(cfg, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert code == 0
     assert "работает" in out
+
+
+# ---------------------------------------------------------------------------
+# Резервное распознавание речи тем же ключом Groq
+# ---------------------------------------------------------------------------
+
+def _stt_cfg(cfg, fallback="groq", **groq):
+    cfg.data["stt"]["cloud_fallback"] = fallback
+    cfg.data["brain"]["groq"] = {"enabled": True, **groq}
+    return cfg
+
+
+def test_cloud_stt_disabled_by_default(cfg):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, fallback="none", api_key="gsk_test"))
+    assert stt.available() is False
+
+
+def test_cloud_stt_direct_with_key(cfg):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, api_key="gsk_test"))
+    assert stt.mode == "direct"
+    assert stt.available() is True
+    assert stt.token == "gsk_test"
+
+
+def test_cloud_stt_requires_key_when_direct(cfg):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, api_key=""))
+    assert stt.available() is False
+
+
+def test_cloud_stt_uses_relay_without_groq_key(cfg):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(
+        cfg,
+        api_key="",
+        relay_url="https://relay.example.workers.dev/openai/v1",
+        relay_token="relay_secret",
+    ))
+    assert stt.mode == "relay"
+    assert stt.available() is True
+    assert stt.base_url.endswith("/openai/v1")
+    # Ключ Groq на машине не нужен — только токен релея.
+    assert stt.token == "relay_secret"
+
+
+def test_cloud_stt_relay_without_token_is_open(cfg):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, relay_url="https://relay.example.workers.dev/openai/v1"))
+    assert stt.available() is True
+    assert stt.token == ""
+
+
+def test_cloud_stt_relay_ignores_common_proxy(cfg):
+    from gul.stt import CloudSTT
+
+    cfg.data["network"]["proxy"] = "http://127.0.0.1:8118"
+    stt = CloudSTT(_stt_cfg(cfg, relay_url="https://relay.example.workers.dev/openai/v1"))
+    assert stt.proxy == ""
+
+
+def test_cloud_stt_transcribe_parses_text(cfg, tmp_path, monkeypatch):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, api_key="gsk_test"))
+    wav = tmp_path / "cmd.wav"
+    wav.write_bytes(b"RIFF0000")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"text": "  какая погода  "}
+
+    calls = {}
+
+    def fake_post(url, **kwargs):
+        calls["url"] = url
+        calls["headers"] = kwargs.get("headers")
+        return FakeResponse()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    text = stt.transcribe(wav)
+    assert text == "какая погода"
+    assert calls["url"].endswith("/audio/transcriptions")
+    assert calls["headers"]["Authorization"] == "Bearer gsk_test"
+
+
+def test_cloud_stt_transcribe_handles_errors(cfg, tmp_path, monkeypatch):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, api_key="gsk_test"))
+    wav = tmp_path / "cmd.wav"
+    wav.write_bytes(b"RIFF0000")
+
+    class BadResponse:
+        status_code = 429
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr("requests.post", lambda *a, **k: BadResponse())
+    assert stt.transcribe(wav) == ""
+
+
+def test_cloud_stt_relay_transcribe_sends_relay_token(cfg, tmp_path, monkeypatch):
+    from gul.stt import CloudSTT
+
+    stt = CloudSTT(_stt_cfg(cfg, relay_url="https://relay.example/openai/v1",
+                            relay_token="relay_secret"))
+    wav = tmp_path / "cmd.wav"
+    wav.write_bytes(b"RIFF0000")
+    seen = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"text": "включи свет"}
+
+    def fake_post(url, **kwargs):
+        seen["url"] = url
+        seen["auth"] = kwargs["headers"].get("Authorization")
+        return FakeResponse()
+
+    monkeypatch.setattr("requests.post", fake_post)
+    assert stt.transcribe(wav) == "включи свет"
+    assert seen["url"] == "https://relay.example/openai/v1/audio/transcriptions"
+    assert seen["auth"] == "Bearer relay_secret"

@@ -230,6 +230,28 @@ def test_brain_test_reports_missing_keys(cfg, capsys):
     assert "Демо-мозг" in out
 
 
+def test_brain_test_fails_when_requested_provider_missing(cfg, capsys):
+    from gul.doctor import brain_test
+
+    cfg.data["brain"]["order"] = ["groq"]
+    cfg.data["brain"]["groq"] = {"enabled": True, "api_key": "", "model": "openai/gpt-oss-20b"}
+    code = brain_test(cfg, only="groq")
+    out = capsys.readouterr().out
+    assert code == 1
+    assert "не готов" in out
+    assert "GROQ_RELAY_URL" in out
+
+
+def test_brain_test_reports_unknown_provider(cfg, capsys):
+    from gul.doctor import brain_test
+
+    cfg.data["brain"]["order"] = ["mock"]
+    code = brain_test(cfg, only="groq")
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "не включён" in out
+
+
 def test_brain_test_explains_403(cfg, capsys):
     from gul.doctor import brain_test
 

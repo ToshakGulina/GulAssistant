@@ -181,34 +181,65 @@ class CommandSTT:
 
 
 class CloudSTT:
-    """Резервное распознавание через Groq Whisper (нужен ключ и VPN)."""
+    """Резервное распознавание через Groq Whisper.
+
+    Тот же ключ, что и у мозга, и тот же релей — отдельный сервис не нужен.
+    Включается осознанно (stt.cloud_fallback: groq), потому что каждый вызов
+    стоит ~0.5–1.5 с и расходует квоту Groq. Срабатывает только когда Vosk
+    не разобрал ни слова — то есть вместо «Не расслышала».
+    """
 
     def __init__(self, cfg: Config):
         self.cfg = cfg
-        self.api_key = str(cfg.get("brain.groq.api_key", "") or "")
-        self.model = cfg.get("stt.cloud_model", "whisper-large-v3-turbo")
-        self.base_url = str(cfg.get("brain.groq.base_url", "https://api.groq.com/openai/v1")).rstrip("/")
-        self.proxy = cfg.get("network.proxy", "") or ""
+        self.model = str(cfg.get("stt.cloud_model", "whisper-large-v3-turbo") or "whisper-large-v3-turbo")
+        self.enabled = str(cfg.get("stt.cloud_fallback", "none") or "none").lower() in ("groq", "auto", "yes", "true")
+
+        groq = cfg.section("brain").get("groq", {}) or {}
+        relay = str(groq.get("relay_url") or "").strip().rstrip("/")
+        if relay:
+            # В релее ключ Groq живёт на стороне Worker; клиент идёт со своим токеном.
+            self.base_url = relay
+            self.token = str(groq.get("relay_token") or "")
+            self.proxy = ""
+            self.mode = "relay"
+        else:
+            self.base_url = str(groq.get("base_url") or "https://api.groq.com/openai/v1").rstrip("/")
+            self.token = str(groq.get("api_key") or "")
+            self.proxy = str(groq.get("proxy") or cfg.get("network.proxy", "") or "")
+            self.mode = "direct"
 
     def available(self) -> bool:
-        return bool(self.api_key)
+        if not self.enabled:
+            return False
+        if self.mode == "relay":
+            # Релей может быть и без токена — тогда хватает URL.
+            return bool(self.base_url)
+        return bool(self.base_url and self.token)
 
     def transcribe(self, wav_path: Path, language: str = "ru") -> str:
         if not self.available():
             return ""
         import requests
 
+        headers = {}
+        if self.token:
+            headers["Authorization"] = f"Bearer {self.token}"
+        proxies = None
+        if self.proxy:
+            proxies = {"http": self.proxy, "https": self.proxy}
         try:
             with open(wav_path, "rb") as fh:
                 response = requests.post(
                     f"{self.base_url}/audio/transcriptions",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    files={"file": (wav_path.name, fh, "audio/wav")},
+                    headers=headers,
+                    files={"file": (getattr(wav_path, "name", "command.wav"), fh, "audio/wav")},
                     data={"model": self.model, "language": language, "response_format": "json"},
                     timeout=25,
-                    proxies={"http": self.proxy, "https": self.proxy} if self.proxy else None,
+                    proxies=proxies,
                 )
-            response.raise_for_status()
+            if response.status_code >= 400:
+                log.warning("Облачное распознавание: HTTP %s", response.status_code)
+                return ""
             return (response.json().get("text") or "").strip()
         except Exception as exc:
             log.warning("Облачное распознавание не сработало: %s", exc)

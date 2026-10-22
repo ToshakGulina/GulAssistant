@@ -336,6 +336,22 @@ def doctor(cfg: Config, network: bool = True) -> int:
     return 0
 
 
+def _not_configured_hints(name: str) -> list[str]:
+    if name == "groq":
+        return [
+            "Нужен один из двух вариантов:",
+            "  • релей: GROQ_RELAY_URL + GROQ_RELAY_TOKEN в .env (docs/GROQ.md, VPN не нужен);",
+            "  • прямой доступ: GROQ_API_KEY + прокси/VPN в network.proxy.",
+        ]
+    if name == "gigachat":
+        return ["GIGACHAT_CLIENT_ID и GIGACHAT_CLIENT_SECRET в .env — бесплатно для физлиц."]
+    if name == "cloudflare":
+        return ["CLOUDFLARE_ACCOUNT_ID и CLOUDFLARE_API_TOKEN в .env (необязательно)."]
+    if name == "generic":
+        return ["brain.generic.base_url и model в config.yaml (свой OpenAI-совместимый сервер)."]
+    return ["Добавьте ключ в .env и запустите снова."]
+
+
 def explain_error(name: str, exc: Exception) -> list[str]:
     """Человеческие подсказки к типовым ошибкам провайдеров."""
     status = getattr(exc, "status", None)
@@ -419,6 +435,8 @@ def brain_test(cfg: Config, only: str | None = None, prompt: str = "Скажи �
         return 2
 
     failures = 0
+    skipped = 0
+    answered = 0
     for provider in providers:
         info = {}
         getter = getattr(provider, "info", None)
@@ -435,6 +453,12 @@ def brain_test(cfg: Config, only: str | None = None, prompt: str = "Скажи �
 
         if not provider.available():
             print(f"[—] {provider.title}{suffix}: не настроен (нет ключа/URL)")
+            if only:
+                failures += 1
+                for hint in _not_configured_hints(provider.name):
+                    print(f"     → {hint}")
+            else:
+                skipped += 1
             continue
 
         started = time.perf_counter()
@@ -464,16 +488,29 @@ def brain_test(cfg: Config, only: str | None = None, prompt: str = "Скажи �
             print(f"[!!] {provider.title}{suffix}: пустой ответ (модель израсходовала "
                   f"лимит на рассуждения — reasoning_effort уже low, попробуйте max_tokens больше)")
             continue
+        answered += 1
         first_text = f"{first_ms:.0f} мс" if first_ms is not None else "—"
         print(f"[OK] {provider.title}{suffix}: первый токен {first_text}, всего {total_ms:.0f} мс")
         print(f"     «{truncate(' '.join(answer.split()), 70)}»")
 
     print()
     if failures:
-        print(f"Итог: {failures} провайдер(ов) с ошибками. Гуль продолжит работать "
-              f"на следующем доступном мозге.")
+        if only:
+            print(f"Итог: {only} не готов — см. подсказки выше.")
+        else:
+            print(f"Итог: {failures} провайдер(ов) с ошибками. Гуль продолжит работать "
+                  f"на следующем доступном мозге.")
         return 1
-    print("Итог: все настроенные мозги ответили.")
+    if only and not answered:
+        print(f"Итог: {only} не проверен — провайдер не включён.")
+        return 1
+    if answered and not skipped:
+        print(f"Итог: все {answered} настроенных мозга ответили.")
+    elif answered:
+        print(f"Итог: ответили {answered}, не настроено {skipped}. "
+              f"Гуль работает на доступных.")
+    else:
+        print("Итог: ни один мозг не настроен — включится демо-режим.")
     return 0
 
 
