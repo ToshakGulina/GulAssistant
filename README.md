@@ -160,10 +160,13 @@ GIGACHAT_CLIENT_SECRET=...
 ### 3. Проверка и запуск
 
 ```bash
-.venv/bin/python run.py --check       # что настроено, что нет
-.venv/bin/python run.py --list-devices # микрофон и колонка
-.venv/bin/python run.py --bench       # реальные задержки на вашем железе
-.venv/bin/python run.py               # голос + веб на :8787
+.venv/bin/python run.py --check         # что настроено, что нет
+.venv/bin/python run.py --doctor        # полная диагностика: звук, Vosk, TTS, мозг
+.venv/bin/python run.py --mic-test 4    # записать микрофон и оценить уровень
+.venv/bin/python run.py --speaker-test  # услышать ответ настоящим TTS
+.venv/bin/python run.py --list-devices  # микрофон и колонка
+.venv/bin/python run.py --bench         # реальные задержки на вашем железе
+.venv/bin/python run.py                 # голос + веб на :8787
 ```
 
 Откройте `http://IP-НЕТТОПА:8787` с телефона или компьютера — там чат, метрики
@@ -178,6 +181,24 @@ journalctl -u gul -f
 
 ---
 
+## Отладка на мощном ПК, работа на Acer
+
+Если неттоп ещё не готов или отлаживать на нём неудобно — не надо ничего
+упрощать. Поставьте **тот же Debian** на отдельный диск основного ПК и гоняйте
+ту же сборку: тот же Vosk, тот же ALSA, тот же TTS, тот же код. Отличие только
+в скорости железа, а рабочий стол и браузер нужны лишь для удобства.
+
+```bash
+bash scripts/install_testbox.sh        # Debian + XFCE + Firefox + весь стек
+bash scripts/emulate_acer.sh .venv/bin/python run.py --web   # ~2 ядра, 20% CPU
+bash scripts/deploy_to_acer.sh --host gul@acer.local --config --env
+```
+
+Полная инструкция, включая установку Debian на второй диск без риска для
+Windows: [docs/DEVBOX.md](docs/DEVBOX.md).
+
+---
+
 ## Режимы запуска
 
 | Команда | Что делает |
@@ -189,6 +210,9 @@ journalctl -u gul -f
 | `python run.py --speak --ask "привет"` | озвучить ответ |
 | `python run.py --say "проверка"` | проверить синтез речи |
 | `python run.py --check` | диагностика железа и настроек |
+| `python run.py --doctor` | полная диагностика стенда + реальный запрос к мозгу |
+| `python run.py --mic-test 4` | записать микрофон и оценить уровень/шум/речь |
+| `python run.py --speaker-test` | проверить колонку настоящим TTS |
 | `python run.py --bench` | бенчмарк TTS, LLM и Vosk |
 | `python run.py --init` | создать `config.yaml` и `.env` |
 | `python run.py --list-devices` | список ALSA-устройств |
@@ -331,7 +355,7 @@ gul/
   server.py             HTTP API + SSE + статика
   config.py             YAML, .env, проверка
 web/                    интерфейс (ванильный JS, без сборки)
-scripts/                установка Debian, модели, тесты
+scripts/                установка Debian, модели, тесты, стенд, перенос на Acer
 systemd/gul.service     автозапуск
 docs/                   план, архитектура, железо, умения Алисы
 tests/                  56 тестов без интернета и микрофона
@@ -377,7 +401,8 @@ bash scripts/test.sh
 | Симптом | Что делать |
 |---|---|
 | `arecord: ... No such file` | `python run.py --list-devices`, укажите `plughw:1,0` в `audio.input_device` |
-| Микрофон есть, но тишина | `alsamixer` → F4 (Capture) → включите и поднимите Gain; проверьте `arecord -d 5 test.wav` |
+| Микрофон есть, но тишина | `python run.py --mic-test 4`; `alsamixer` → F4 (Capture) → включите и поднимите Gain |
+| Не понимаю, что сломано | `python run.py --doctor` — проверяет всё по очереди и подсказывает |
 | `Модель Vosk не найдена` | `bash scripts/download_models.sh` |
 | GigaChat 401 | проверьте `GIGACHAT_CLIENT_ID/SECRET` и `scope: GIGACHAT_API_PERS`; удалите `data/.gigachat_token.json` |
 | GigaChat SSL error | уже стоит `verify_ssl: false`; при желании установите сертификат НУЦ Минцифры |
@@ -414,6 +439,7 @@ bash scripts/test.sh
 - [docs/HARDWARE.md](docs/HARDWARE.md) — настройка Acer R3700 и Debian с нуля
 - [docs/ALICE_SKILLS.md](docs/ALICE_SKILLS.md) — полное сравнение умений с Алисой
 - [docs/LATENCY.md](docs/LATENCY.md) — бюджет задержки и способы её уменьшить
+- [docs/DEVBOX.md](docs/DEVBOX.md) — тестовый стенд на своём ПК и перенос на Acer
 
 ## Лицензия
 

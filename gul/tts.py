@@ -203,6 +203,8 @@ class Speaker:
         self._disabled: dict[str, float] = {}
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="tts")
         self._last_files: list[Path] = []
+        # Какой движок реально озвучил последнюю фразу — для --speaker-test и логов.
+        self.last_engine: str = ""
 
     # -- состояние -------------------------------------------------------
     def available_engines(self) -> list[dict]:
@@ -255,6 +257,7 @@ class Speaker:
                 latency = int((time.perf_counter() - started) * 1000)
                 self.metrics.record("tts", engine=engine.name, latency_ms=latency,
                                     chars=len(text))
+                self.last_engine = engine.name
                 self._cleanup()
                 return path, engine.name
             except Exception as exc:

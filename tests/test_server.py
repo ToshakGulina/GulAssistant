@@ -48,6 +48,7 @@ def test_status(web):
     assert data["name"] == "Гуль"
     assert data["providers"]
     assert data["skills"]
+    assert data["machine"]["host"]
 
 
 def test_chat_skill(web):

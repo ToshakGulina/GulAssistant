@@ -31,6 +31,71 @@ def which(name: str) -> str | None:
     return shutil.which(name)
 
 
+def rms_level(pcm: bytes) -> float:
+    """Среднеквадратичный уровень 16-битного PCM (каждый второй сэмпл — быстро)."""
+    if len(pcm) < 2:
+        return 0.0
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    if not samples:
+        return 0.0
+    picked = samples[::2]
+    total = sum(s * s for s in picked)
+    return math.sqrt(total / max(1, len(picked)))
+
+
+def peak_level(pcm: bytes) -> int:
+    """Максимальная амплитуда — для диагностики клиппинга и тишины."""
+    if len(pcm) < 2:
+        return 0
+    samples = array.array("h")
+    samples.frombytes(pcm[: len(pcm) // 2 * 2])
+    return max((abs(s) for s in samples), default=0)
+
+
+def analyze_pcm(pcm: bytes, sample_rate: int = 16000, chunk_ms: int = 125) -> dict:
+    """Разбор записи: уровень шума, доля речи, клиппинг.
+
+    Нужен, чтобы отличить «микрофон молчит» от «микрофон работает, но тихо»
+    без прослушивания файла. Тот же порог, что у VAD.
+    """
+    chunk_bytes = max(2, int(sample_rate * 2 * chunk_ms / 1000))
+    chunks = [pcm[i:i + chunk_bytes] for i in range(0, len(pcm), chunk_bytes)]
+    chunks = [c for c in chunks if len(c) >= chunk_bytes // 2]
+    levels = [rms_level(c) for c in chunks] or [0.0]
+    peaks = [peak_level(c) for c in chunks] or [0]
+    noise = sorted(levels)[max(0, int(len(levels) * 0.1) - 1)]
+    threshold = max(130.0, noise * 1.9)
+    speech_chunks = sum(1 for level in levels if level > threshold)
+    clipped = sum(1 for peak in peaks if peak >= 32000)
+    return {
+        "seconds": round(len(chunks) * chunk_ms / 1000, 2),
+        "rms": round(rms_level(pcm), 1),
+        "peak": max(peaks),
+        "noise": round(noise, 1),
+        "threshold": round(threshold, 1),
+        "speech_ratio": round(speech_chunks / len(chunks), 3),
+        "clipped_ratio": round(clipped / len(chunks), 4),
+    }
+
+
+def record_pcm(seconds: float = 4.0, device: str = "default",
+               sample_rate: int = 16000) -> bytes:
+    """Записать ровно N секунд сырого PCM. Бросает AudioError с подсказкой."""
+    if not which("arecord"):
+        raise AudioError("arecord не найден. Установите: sudo apt install alsa-utils")
+    cmd = ["arecord", "-q", "-D", device or "default", "-f", "S16_LE",
+           "-r", str(sample_rate), "-c", "1", "-t", "raw", "-d", str(max(1, int(seconds)))]
+    try:
+        proc = subprocess.run(cmd, capture_output=True, timeout=seconds + 5)
+    except subprocess.TimeoutExpired as exc:
+        raise AudioError(f"Запись не завершилась за {seconds + 5:.0f} с — устройство занято?") from exc
+    if proc.returncode != 0:
+        err = (proc.stderr or b"").decode(errors="ignore").strip()[:300]
+        raise AudioError(f"arecord не смог записать с «{device}»: {err}")
+    return proc.stdout
+
+
 def list_alsa_devices() -> dict:
     out = {"capture": [], "playback": []}
     for kind, cmd in (("capture", ["arecord", "-l"]), ("playback", ["aplay", "-l"])):
@@ -129,16 +194,7 @@ class VAD:
         self._calibrated = 0
 
     def rms(self, chunk: bytes) -> float:
-        if len(chunk) < 2:
-            return 0.0
-        samples = array.array("h")
-        samples.frombytes(chunk[: len(chunk) // 2 * 2])
-        if not samples:
-            return 0.0
-        # Быстро и без numpy: средний квадрат.
-        total = sum(s * s for s in samples[::2])  # каждый второй сэмпл — хватает
-        count = max(1, len(samples[::2]))
-        return math.sqrt(total / count)
+        return rms_level(chunk)
 
     def is_speech(self, chunk: bytes) -> bool:
         level = self.rms(chunk)

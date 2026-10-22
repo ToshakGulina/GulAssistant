@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import platform
+import socket
 import threading
 import time
 from dataclasses import dataclass, field
@@ -354,6 +356,10 @@ class Assistant:
         return {
             "name": self.name,
             "version": __version__,
+            "machine": {
+                "host": socket.gethostname(),
+                "platform": f"{platform.system()} {platform.release()}",
+            },
             "uptime": human_uptime(time.time() - self.started_at),
             "uptime_seconds": round(time.time() - self.started_at),
             "city": self.city,
