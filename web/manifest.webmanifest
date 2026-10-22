@@ -1,0 +1,11 @@
+{
+  "name": "Гуль — голосовой ассистент",
+  "short_name": "Гуль",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#07090d",
+  "theme_color": "#07090d",
+  "icons": [
+    {"src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml"}
+  ]
+}

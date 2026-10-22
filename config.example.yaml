@@ -1,0 +1,181 @@
+# ============================================================================
+#  Гуль — голосовой ассистент. Конфигурация.
+#  Скопируйте в config.yaml:  cp config.example.yaml config.yaml
+#  Ключи можно вписать сюда или положить в файл .env (см. .env.example).
+# ============================================================================
+
+assistant:
+  name: Гуль
+  # Слова активации. Vosk слушает их постоянно и почти не ест CPU.
+  wake_words:
+    - привет гуль
+    - слушай гуль
+    - эй гуль
+  language: ru
+  # Личность и правила поведения. Меняйте как угодно — это ваш ассистент.
+  persona: |
+    Ты — Гуль, умный и дружелюбный голосовой ассистент. Отвечаешь по-русски,
+    живо и по-человечески, но кратко: обычно 1–3 предложения, если не просят
+    подробнее. Ты работаешь голосом, поэтому не используешь списки, таблицы,
+    markdown, эмодзи и ссылки. Числа и даты произноси словами, когда это уместно.
+    Ты честен: если чего-то не знаешь или не можешь — так и говоришь.
+    Ты не отказываешься от безобидных просьб и не морализируешь.
+  # Сколько последних реплик диалога помнить (пары вопрос-ответ).
+  max_history_turns: 8
+  # Максимальная длина озвучиваемого ответа (символов). Длинное обрежется.
+  tts_max_chars: 900
+
+audio:
+  # Устройства ALSA. "default" — обычно нормально. Список: python run.py --list-devices
+  input_device: default
+  output_device: default
+  sample_rate: 16000
+  # Сколько секунд тишины считать концом фразы.
+  silence_seconds: 0.8
+  max_record_seconds: 12
+  # Порог детектора речи: 0 — авто (адаптивно по шуму), иначе 200..4000.
+  vad_threshold: 0
+  # Звуковой сигнал после слова активации.
+  beep: true
+  # Перебивание: сказать «стоп» во время ответа. На дешёвом микрофоне
+  # возможны ложные срабатывания от самой колонки — тогда поставьте false.
+  barge_in: true
+
+stt:
+  engine: vosk
+  model_path: models/vosk-model-small-ru-0.22
+  # Облачное распознавание как резерв (точнее на сложной речи), требует ключ Groq.
+  # none | groq
+  cloud_fallback: none
+  cloud_model: whisper-large-v3-turbo
+  # auto — грамматика, если все слова есть в словаре Vosk, иначе полное распознавание;
+  # grammar — только слова активации (минимум CPU); full — полное (надёжнее для имён).
+  wake_mode: auto
+
+tts:
+  # Порядок предпочтения. Первый доступный движок используется.
+  # edge  — нейроголос Microsoft, красиво, но нужен интернет (бесплатно, без ключа).
+  # piper — локальный нейроголос, быстрый на слабом CPU (скачать модель).
+  # rhvoice — локальный, очень быстрый, голос слегка робот.
+  # espeak — совсем простой резерв, звучит механически.
+  engines: [edge, piper, rhvoice, espeak]
+  edge_voice: ru-RU-DmitryNeural
+  piper_binary: piper
+  piper_model: models/piper/ru_RU-dmitry-medium.onnx
+  rhvoice_voice: Aleksandr
+  espeak_voice: ru
+  # Скорость речи: 1.0 — обычная.
+  speed: 1.0
+  volume: 1.0
+
+brain:
+  # Порядок «мозгов». Первый доступный и работающий используется.
+  # gigachat    — Сбер, 365 млн бесплатных токенов в год, из РФ без VPN. Рекомендую.
+  # groq        — самый быстрый, но из РФ нужен VPN/прокси.
+  # cloudflare  — 10 000 нейронов в день бесплатно, без карты, из РФ обычно доступен.
+  # generic     — любой OpenAI-совместимый сервер (свой llama.cpp, DeepSeek, AIR и т.п.).
+  # mock        — демо-режим без ключей (для настройки и веб-интерфейса).
+  order: [gigachat, groq, cloudflare, generic, mock]
+  temperature: 0.6
+  max_tokens: 450
+  # Таймаут ожидания первого токена, секунды. Если дольше — переключаемся.
+  first_token_timeout: 8
+  gigachat:
+    enabled: true
+    # Ключи: https://developers.sber.ru/portal/products/gigachat-api (физлицо, Freemium)
+    client_id: ${GIGACHAT_CLIENT_ID}
+    client_secret: ${GIGACHAT_CLIENT_SECRET}
+    model: GigaChat-2
+    scope: GIGACHAT_API_PERS
+    base_url: https://gigachat.devices.sberbank.ru/api/v1
+    auth_url: https://ngw.devices.sberbank.ru:9443/api/v2/oauth
+    # У Сбера свой корневой сертификат, которого часто нет в системе.
+    # false — работает сразу; true — если установили сертификат НУЦ Минцифры.
+    verify_ssl: false
+  groq:
+    enabled: true
+    api_key: ${GROQ_API_KEY}
+    model: openai/gpt-oss-120b
+    base_url: https://api.groq.com/openai/v1
+  cloudflare:
+    enabled: true
+    account_id: ${CLOUDFLARE_ACCOUNT_ID}
+    api_key: ${CLOUDFLARE_API_TOKEN}
+    model: "@cf/openai/gpt-oss-120b"
+  generic:
+    enabled: false
+    base_url: http://127.0.0.1:8080/v1
+    api_key: none
+    model: local-model
+  mock:
+    enabled: true
+
+network:
+  # Прокси для «зарубежных» сервисов (Groq, Edge TTS), если есть VPN/прокси.
+  # Примеры: http://127.0.0.1:8118  socks5h://127.0.0.1:1080
+  proxy: ""
+  timeout: 15
+
+skills:
+  weather:
+    city: Москва
+    lat: 55.7558
+    lon: 37.6173
+    cache_minutes: 10
+  news:
+    max_items: 4
+    sources:
+      - https://lenta.ru/rss/news
+      - https://www.interfax.ru/rss.asp
+  currency:
+    cache_hours: 6
+  music:
+    library_dirs:
+      - ~/Music
+    # Потоковые станции: name + url (ICY mp3/aac). Проверьте работоспособность у себя.
+    radio:
+      - name: Европа Плюс
+        url: https://ep128.hostingradio.ru:8030/ep128
+      - name: Ретро FM
+        url: https://retro128.hostingradio.ru:8030/retro128
+      - name: Радио Рекорд
+        url: https://radiorecord.hostingradio.ru/rr96.aacp
+    player: mpv
+    volume_step: 10
+  mqtt:
+    enabled: false
+    host: 127.0.0.1
+    port: 1883
+    username: ""
+    password: ""
+    # Голосовые команды вида «включи свет на кухне» → MQTT-топик и payload.
+    devices:
+      - name: свет на кухне
+        topic: home/kitchen/light/set
+        on: "ON"
+        off: "OFF"
+      - name: розетка
+        topic: home/plug/set
+        on: "ON"
+        off: "OFF"
+  system:
+    # Разрешить голосом выключать/перезагружать неттоп. Осторожно!
+    allow_shutdown: false
+  wiki:
+    enabled: true
+  notes_file: data/notes.json
+  memory_file: data/memory.json
+  timers_file: data/timers.json
+
+web:
+  enabled: true
+  host: 0.0.0.0
+  port: 8787
+  # Если задать — веб-интерфейс попросит токен (для доступа из локальной сети).
+  token: ""
+  # Озвучивать ответы, набранные в веб-интерфейсе.
+  speak: false
+
+logging:
+  level: INFO
+  file: data/gul.log

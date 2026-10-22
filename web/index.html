@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#07090d">
+  <title>Гуль — умный голосовой ассистент</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="aurora" aria-hidden="true">
+    <div class="aurora-blob blob-a"></div>
+    <div class="aurora-blob blob-b"></div>
+    <div class="aurora-blob blob-c"></div>
+    <div class="grid-overlay"></div>
+  </div>
+
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo" aria-hidden="true"><span>Г</span></div>
+      <div class="brand-text">
+        <h1>Гуль</h1>
+        <p>умный ассистент · ваш сервер, ваши правила</p>
+      </div>
+    </div>
+    <div class="top-actions">
+      <span class="status-pill" id="status-pill"><i class="dot"></i><span>онлайн</span></span>
+      <span class="uptime" id="uptime">—</span>
+      <button class="icon-button" id="voice-test" type="button" title="Проверить голос">
+        <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+          <path d="M4 9v6h4l5 4V5L8 9H4z" fill="currentColor"/>
+          <path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="card chat" aria-label="Диалог">
+      <div class="chat-head">
+        <div>
+          <h2>Диалог</h2>
+          <p>Наберите вопрос или скажите «Привет, Гуль»</p>
+        </div>
+        <button class="ghost-button" id="clear" type="button">Очистить</button>
+      </div>
+
+      <div class="messages" id="messages" role="log" aria-live="polite"></div>
+
+      <div class="suggestions" id="suggestions" aria-label="Примеры команд">
+        <button type="button" data-text="Какая сегодня погода?">Погода</button>
+        <button type="button" data-text="Поставь таймер на 5 минут">Таймер 5 минут</button>
+        <button type="button" data-text="Курс доллара">Курс доллара</button>
+        <button type="button" data-text="Что ты умеешь?">Что ты умеешь</button>
+        <button type="button" data-text="Включи радио Европа Плюс">Включи радио</button>
+        <button type="button" data-text="Расскажи что-нибудь интересное">Расскажи что-нибудь</button>
+      </div>
+
+      <form class="composer" id="form" autocomplete="off">
+        <label class="sr-only" for="input">Сообщение</label>
+        <textarea id="input" rows="1" placeholder="Спросите что угодно…" maxlength="2000"></textarea>
+        <button class="stop-button hidden" id="stop" type="button">Стоп</button>
+        <button class="send-button" id="send" type="submit" aria-label="Отправить">
+          <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
+            <path d="M4 12l16-8-5 8 5 8-16-8z" fill="currentColor"/>
+          </svg>
+        </button>
+      </form>
+      <div class="chat-foot">
+        <span>Enter — отправить · Shift + Enter — новая строка</span>
+        <span class="demo-note" id="demo-note"></span>
+      </div>
+    </section>
+
+    <aside class="sidebar" aria-label="Состояние ассистента">
+      <section class="card panel">
+        <div class="panel-head">
+          <h3>Мозг</h3>
+          <span class="tiny">бесплатные модели</span>
+        </div>
+        <div class="provider-list" id="providers">
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+        </div>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <h3>Задержка ответа</h3>
+          <span class="tiny">цель ≤ 5 с</span>
+        </div>
+        <div class="latency-hero">
+          <div>
+            <span class="latency-value" id="p50">—</span>
+            <span class="latency-unit">мс медиана</span>
+          </div>
+          <div class="latency-side">
+            <span>p95 <b id="p95">—</b></span>
+            <span>ответов <b id="answers">0</b></span>
+          </div>
+        </div>
+        <div class="progress"><div class="progress-bar" id="under5-bar" style="width:0%"></div></div>
+        <div class="progress-caption"><span id="under5">—</span> укладываются в 5 секунд</div>
+      </section>
+
+      <section class="card panel">
+        <div class="panel-head">
+          <h3>Железо</h3>
+          <span class="tiny" id="audio-state">—</span>
+        </div>
+        <div class="specs">
+          <div class="spec-row">
+            <span class="spec-label">Процессор</span>
+            <span class="spec-value" id="cpu">—</span>
+          </div>
+          <div class="spec-row">
+            <span class="spec-label">Память</span>
+            <span class="spec-value" id="mem-text">—</span>
+          </div>
+          <div class="memory-track"><div class="memory-fill" id="mem-bar" style="width:0%"></div></div>
+          <div class="spec-row">
+            <span class="spec-label">Аптайм</span>
+            <span class="spec-value" id="uptime-2">—</span>
+          </div>
+        </div>
+        <div class="warn" id="warnings" hidden></div>
+      </section>
+
+      <section class="card panel skills-panel">
+        <div class="panel-head">
+          <h3>Умения</h3>
+          <span class="tiny" id="skills-count">—</span>
+        </div>
+        <div class="skill-list" id="skills">
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+          <div class="skeleton-row"></div>
+        </div>
+      </section>
+
+      <p class="sidebar-note">Работает без подписки и рекламы. Быстрые команды — локально, сложные ответы — в бесплатном облаке.</p>
+    </aside>
+  </main>
+
+  <div class="toasts" id="toasts" aria-live="polite"></div>
+
+  <div class="modal hidden" id="token-modal">
+    <div class="modal-card">
+      <h2>Доступ к Гулю</h2>
+      <p>Введите токен из <code>config.yaml</code> (поле <code>web.token</code>).</p>
+      <input id="token-input" type="password" placeholder="Токен" autocomplete="current-password">
+      <div class="modal-actions">
+        <button class="primary-button" id="token-save" type="button">Войти</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

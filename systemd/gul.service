@@ -1,0 +1,19 @@
+[Unit]
+Description=Gul voice assistant
+Documentation=https://github.com/ToshakGulina/GulAssistant
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT__
+Environment=PYTHONUNBUFFERED=1
+ExecStart=__PROJECT__/.venv/bin/python __PROJECT__/run.py
+Restart=always
+RestartSec=5
+SupplementaryGroups=audio
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target
