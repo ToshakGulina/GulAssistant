@@ -21,6 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from . import __version__
 from .assistant import Assistant
 from .config import Config
 from .utils import truncate
@@ -127,7 +128,7 @@ class WebServer:
 
 def _make_handler(app: WebServer):
     class Handler(BaseHTTPRequestHandler):
-        server_version = "GulAssistant/1.0"
+        server_version = f"GulAssistant/{__version__}"
         protocol_version = "HTTP/1.1"
 
         # -- утилиты -----------------------------------------------------
