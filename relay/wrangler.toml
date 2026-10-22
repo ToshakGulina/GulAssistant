@@ -1,0 +1,13 @@
+# Развёртывание релея через Wrangler CLI (если он у вас есть).
+# Для установки без Node.js используйте панель Cloudflare — см. README.md.
+
+name = "gul-groq-relay"
+main = "groq-relay.js"
+compatibility_date = "2026-09-01"
+
+# Секреты НЕ пишем в этот файл. Задаются командами:
+#   npx wrangler secret put GROQ_API_KEY
+#   npx wrangler secret put RELAY_TOKEN
+#
+# [vars]
+# LOG_LEVEL = "info"

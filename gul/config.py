@@ -59,7 +59,7 @@ DEFAULTS: dict[str, Any] = {
         "volume": 1.0,
     },
     "brain": {
-        "order": ["gigachat", "groq", "cloudflare", "generic", "mock"],
+        "order": ["groq", "gigachat", "cloudflare", "generic", "mock"],
         "temperature": 0.6,
         "max_tokens": 450,
         "first_token_timeout": 8,
@@ -76,8 +76,13 @@ DEFAULTS: dict[str, Any] = {
         "groq": {
             "enabled": True,
             "api_key": "",
-            "model": "openai/gpt-oss-120b",
+            "model": "openai/gpt-oss-20b",
             "base_url": "https://api.groq.com/openai/v1",
+            "relay_url": "",
+            "relay_token": "",
+            "proxy": "",
+            "token_param": "max_completion_tokens",
+            "extra_params": {"reasoning_effort": "low", "include_reasoning": False},
         },
         "cloudflare": {
             "enabled": True,
@@ -186,12 +191,26 @@ class Config:
     def warnings(self) -> list[str]:
         """Понятные человеку предупреждения о недонастроенном конфиге."""
         out: list[str] = []
-        gc = self.section("brain").get("gigachat", {}) or {}
+        brain = self.section("brain")
+        gc = brain.get("gigachat", {}) or {}
+        groq = brain.get("groq", {}) or {}
+        order = brain.get("order") or []
         if not (gc.get("client_id") and gc.get("client_secret")):
             out.append(
                 "GigaChat не настроен (нет GIGACHAT_CLIENT_ID/SECRET) — "
-                "основной бесплатный мозг не подключён."
+                "бесплатный мозг из РФ без VPN не подключён."
             )
+        if groq.get("enabled", True) and not groq.get("relay_url"):
+            if not groq.get("api_key"):
+                out.append(
+                    "Groq не настроен: нет ни GROQ_API_KEY, ни GROQ_RELAY_URL. "
+                    "Из РФ прямой доступ закрыт — проще всего свой релей, см. docs/GROQ.md."
+                )
+            elif not (groq.get("proxy") or self.get("network.proxy")):
+                out.append(
+                    "Groq настроен напрямую без прокси. Из РФ api.groq.com отвечает 403 — "
+                    "добавьте релей (docs/GROQ.md) или network.proxy."
+                )
         if not self.path(self.get("stt.model_path", "")).exists():
             out.append(
                 f"Модель Vosk не найдена: {self.get('stt.model_path')}. "

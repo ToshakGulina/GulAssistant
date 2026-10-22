@@ -69,13 +69,14 @@ tts:
   volume: 1.0
 
 brain:
-  # Порядок «мозгов». Первый доступный и работающий используется.
-  # gigachat    — Сбер, 365 млн бесплатных токенов в год, из РФ без VPN. Рекомендую.
-  # groq        — самый быстрый, но из РФ нужен VPN/прокси.
+  # Порядок «мозгов». Первый доступный и работающий используется,
+  # при сбое или лимите — мгновенное переключение на следующий.
+  # groq        — самый быстрый (LPU). Из РФ — через свой релей или прокси.
+  # gigachat    — Сбер, 365 млн бесплатных токенов в год, из РФ без VPN.
   # cloudflare  — 10 000 нейронов в день бесплатно, без карты, из РФ обычно доступен.
   # generic     — любой OpenAI-совместимый сервер (свой llama.cpp, DeepSeek, AIR и т.п.).
   # mock        — демо-режим без ключей (для настройки и веб-интерфейса).
-  order: [gigachat, groq, cloudflare, generic, mock]
+  order: [groq, gigachat, cloudflare, generic, mock]
   temperature: 0.6
   max_tokens: 450
   # Таймаут ожидания первого токена, секунды. Если дольше — переключаемся.
@@ -94,9 +95,25 @@ brain:
     verify_ssl: false
   groq:
     enabled: true
+    # 20b примерно вдвое быстрее 120b и для голоса достаточно умён.
+    # Хотите сложнее ответы — поставьте openai/gpt-oss-120b.
+    model: openai/gpt-oss-20b
+    # Прямой доступ. Из РФ api.groq.com отдаёт 403 — нужен релей или прокси.
     api_key: ${GROQ_API_KEY}
-    model: openai/gpt-oss-120b
     base_url: https://api.groq.com/openai/v1
+    # РЕКОМЕНДУЮ: свой Cloudflare Worker как релей (см. docs/GROQ.md).
+    # Если relay_url задан — прямой ключ не нужен, ключ Groq хранится
+    # в секретах Worker и на неттоп не попадает.
+    relay_url: ${GROQ_RELAY_URL}
+    relay_token: ${GROQ_RELAY_TOKEN}
+    # Прокси только для Groq (пусто — берётся network.proxy; для релея не нужен).
+    proxy: ""
+    # Groq считает reasoning-токены в лимите ответа и поддерживает
+    # max_completion_tokens. Для голоса рассуждения приглушены.
+    token_param: max_completion_tokens
+    extra_params:
+      reasoning_effort: low
+      include_reasoning: false
   cloudflare:
     enabled: true
     account_id: ${CLOUDFLARE_ACCOUNT_ID}

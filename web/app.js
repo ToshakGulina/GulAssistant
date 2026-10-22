@@ -317,11 +317,15 @@ $("#clear").addEventListener("click", async () => {
 /* ---------------- статус ---------------- */
 
 function providerSubtitle(provider) {
+  const mode = provider.mode === "relay" ? "релей" : provider.mode === "proxy" ? "прокси" : "";
   if (!provider.available) return "нет ключа";
   if (provider.cooldown_seconds > 0) return `пауза ${provider.cooldown_seconds} с`;
   if (provider.state === "error") return "ошибка · резерв";
-  if (provider.last_latency_ms) return `первый токен ${(provider.last_latency_ms / 1000).toFixed(1)} с`;
-  return "готов";
+  if (provider.last_latency_ms) {
+    const latency = `первый токен ${(provider.last_latency_ms / 1000).toFixed(1)} с`;
+    return mode ? `${latency} · ${mode}` : latency;
+  }
+  return mode ? `готов · ${mode}` : "готов";
 }
 
 function renderProviders(providers) {

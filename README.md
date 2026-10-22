@@ -5,7 +5,7 @@
 
 Гуль — открытый голосовой ассистент для слабого железа. Он понимает русскую речь
 офлайн, мгновенно выполняет бытовые команды, а на сложные вопросы отвечает через
-бесплатные нейросети (GigaChat, Groq, Cloudflare) с автоматическим переключением.
+бесплатные нейросети (Groq, GigaChat, Cloudflare) с автоматическим переключением.
 Ни подписки, ни рекламы, ни «извините, я не могу обсуждать эту тему».
 
 ---
@@ -26,7 +26,7 @@ Acer Aspire R3700 — это Intel Atom **D525** (2 ядра, 1.8 ГГц, 2010 �
 | Распознавание команды | локально, Vosk | 0.2–0.6 с |
 | Время, таймеры, будильники, заметки, память, калькулятор | локально, Python | 1–50 мс |
 | Погода, новости, курсы, Википедия | бесплатные API, кэш | 0.3–1.5 с |
-| Свободный разговор, советы, объяснения | GigaChat / Groq / Cloudflare | 0.6–1.5 с до первого токена |
+| Свободный разговор, советы, объяснения | Groq / GigaChat / Cloudflare | 0.2–0.6 с до первого токена (Groq через релей) |
 | Синтез речи | Edge TTS, Piper, RHVoice или espeak | 0.1–0.8 с на первую фразу |
 
 **Итог:** бытовые команды — **0.5–1.5 секунды**, умные ответы — **1.5–3.5 секунды**
@@ -48,7 +48,7 @@ Acer Aspire R3700 — это Intel Atom **D525** (2 ядра, 1.8 ГГц, 2010 �
                  │              ┌─────────────────────────┴───────────────┐          │
                  │              ▼                                         ▼          │
                  │        быстрый скилл                            LLM-роутер         │
-                 │   (время, таймер, заметки, калькулятор)     GigaChat → Groq →     │
+                 │   (время, таймер, заметки, калькулятор)   Groq → GigaChat →       │
                  │              │                              Cloudflare → mock    │
                  │              └─────────────────────┬───────────────────┘          │
                  │                                    ▼                              │
@@ -104,16 +104,21 @@ Acer Aspire R3700 — это Intel Atom **D525** (2 ядра, 1.8 ГГц, 2010 �
 
 | Провайдер | Что даёт | Бесплатный лимит | Доступ из РФ | Роль |
 |---|---|---|---|---|
-| **GigaChat (Сбер)** | GigaChat-2 / Pro / Max | **365 млн токенов на 12 мес.** физлицу (250 млн Lite + 40 млн Pro + 25 млн Max + 50 млн Ultra) | ✅ без VPN | основной |
-| **Groq** | gpt-oss-120b, Whisper | 1 000 запросов/день, 30/мин | ⚠️ с российских IP отдаёт 403 — нужен VPN/прокси | быстрый резерв |
+| **Groq** | gpt-oss-20b / 120b | 30 запросов/мин, 1 000/день, 8K токенов/мин | ⚠️ напрямую из РФ 403 → **свой релей на Cloudflare** (бесплатно, без VPN) | основной |
+| **GigaChat (Сбер)** | GigaChat-2 / Pro / Max | **365 млн токенов на 12 мес.** физлицу (250 млн Lite + 40 млн Pro + 25 млн Max + 50 млн Ultra) | ✅ без VPN | резерв №1 |
 | **Cloudflare Workers AI** | gpt-oss-120b, Qwen, Llama | 10 000 нейронов/день, без карты | ✅ обычно доступен | резерв |
 | **Open-Meteo** | погода | без ключа, без лимита для личного использования | ✅ | данные |
 | **ЦБ РФ / RSS / Википедия** | курсы, новости, факты | без ключей | ✅ | данные |
 | **Демо-мозг** | встроенные ответы | всегда | ✅ | настройка без ключей |
 
-Порядок задаётся в `config.yaml` → `brain.order`. Если GigaChat вернул 401/429
+Порядок задаётся в `config.yaml` → `brain.order`, по умолчанию
+`[groq, gigachat, cloudflare, generic, mock]`. Если Groq вернул 403/429
 или лёг, роутер в ту же секунду пробует следующий доступный мозг. Пользователь
 слышит ответ, а не ошибку.
+
+**Как включить Groq из России:** поднять свой релей на Cloudflare Worker
+(5 минут, бесплатно, VPN не нужен) и прописать в `.env` два значения.
+Ключ Groq при этом остаётся в секретах Worker. Пошагово: [docs/GROQ.md](docs/GROQ.md).
 
 > ⚠️ Условия бесплатных тарифов меняются. На октябрь 2026 GigaChat Freemium —
 > 365 млн токенов для физлиц; с 1 сентября 2026 часть новых клиентов направляют
@@ -135,6 +140,7 @@ sudo apt update && sudo apt install -y git
 git clone https://github.com/ToshakGulina/GulAssistant.git
 cd GulAssistant
 bash scripts/setup_debian.sh
+bash scripts/quickstart.sh          # ключи, модель и проверка мозгов
 ```
 
 Скрипт поставит Python, ALSA, ffmpeg, mpv, espeak-ng, создаст venv, скачает
@@ -146,16 +152,28 @@ bash scripts/setup_debian.sh
 nano .env
 ```
 
-Минимум — GigaChat (бесплатно, из РФ без VPN):
+Основной мозг — Groq через свой релей (быстрее всех). Если релея нет,
+работает GigaChat — бесплатно и из РФ без VPN:
 
 ```
 GIGACHAT_CLIENT_ID=...
 GIGACHAT_CLIENT_SECRET=...
 ```
 
-Ключи выдаются в [кабинете GigaChat API](https://developers.sber.ru/portal/products/gigachat-api)
-для физических лиц. Groq и Cloudflare опциональны. Если ключей нет вообще —
-ассистент запустится в демо-режиме, а все быстрые команды будут работать.
+```dotenv
+# Быстрый путь: Groq через свой Cloudflare-релей (docs/GROQ.md)
+GROQ_RELAY_URL=https://gul-groq-relay.xxx.workers.dev/openai/v1
+GROQ_RELAY_TOKEN=ваш_пароль_релея
+
+# Или без релея: GigaChat, бесплатно для физлиц
+GIGACHAT_CLIENT_ID=...
+GIGACHAT_CLIENT_SECRET=...
+```
+
+Всё это можно ввести интерактивно: `bash scripts/quickstart.sh`.
+Ключи GigaChat выдаются в [кабинете GigaChat API](https://developers.sber.ru/portal/products/gigachat-api).
+Если ключей нет вообще — ассистент запустится в демо-режиме, а все быстрые
+команды будут работать.
 
 ### 3. Проверка и запуск
 
@@ -211,6 +229,7 @@ Windows: [docs/DEVBOX.md](docs/DEVBOX.md).
 | `python run.py --say "проверка"` | проверить синтез речи |
 | `python run.py --check` | диагностика железа и настроек |
 | `python run.py --doctor` | полная диагностика стенда + реальный запрос к мозгу |
+| `python run.py --brain groq` | проверить конкретный мозг и получить диагноз ошибки |
 | `python run.py --mic-test 4` | записать микрофон и оценить уровень/шум/речь |
 | `python run.py --speaker-test` | проверить колонку настоящим TTS |
 | `python run.py --bench` | бенчмарк TTS, LLM и Vosk |
@@ -226,14 +245,16 @@ Windows: [docs/DEVBOX.md](docs/DEVBOX.md).
 | Wake-word | 0.2–0.5 с | Vosk small, грамматика |
 | Конец фразы → текст | 0.2–0.6 с | пауза 0.8 с + декодирование |
 | Быстрый скилл | 1–50 мс | локально |
-| Первый токен LLM | 0.6–1.5 с | GigaChat из РФ; Groq быстрее, но нужен VPN |
+| Первый токен LLM | 0.2–0.8 с | Groq через релей; GigaChat 0.6–1.5 с |
 | Синтез первой фразы | 0.1–0.8 с | RHVoice < Piper < Edge |
 | **Итого: команда** | **0.5–1.5 с** | до первого звука |
 | **Итого: умный ответ** | **1.5–3.5 с** | до первого звука |
 
 Что помогает:
 
-- **GigaChat основным** — серверы в РФ, без VPN и лишнего хопа.
+- **Groq основным** — релей на Cloudflare добавляет всего 30–80 мс, зато модель
+  отвечает в 3–5 раз быстрее. Если релей недоступен, GigaChat подхватит сам.
+- **`reasoning_effort: low`** — у gpt-oss рассуждения стоят секунд и токенов.
 - **Edge TTS** — самый красивый голос; если интернет слабый, поставьте первым
   `rhvoice` или `piper` — локально и мгновенно.
 - **Ethernet вместо Wi-Fi b/g/n** — на R3700 это часто главный источник задержки.
@@ -275,7 +296,7 @@ brain:
     verify_ssl: false       # у Сбера свой корневой сертификат
 
 network:
-  proxy: ""                 # http://127.0.0.1:8118 для Groq/Edge, если есть VPN
+  proxy: ""                 # socks5h://127.0.0.1:1080 — только для прямого Groq/Edge
 
 skills:
   weather:
@@ -339,7 +360,7 @@ gul/
   tts.py                Edge/Piper/RHVoice/espeak + потоковая озвучка
   llm/
     base.py             общий интерфейс провайдера
-    providers.py        GigaChat, Groq, Cloudflare, generic, mock
+    providers.py        Groq (прямой/прокси/релей), GigaChat, Cloudflare, generic, mock
     router.py           автопереключение и health-check
   skills/
     basic.py            время, приветствие, помощь, стоп
@@ -356,6 +377,7 @@ gul/
   config.py             YAML, .env, проверка
 web/                    интерфейс (ванильный JS, без сборки)
 scripts/                установка Debian, модели, тесты, стенд, перенос на Acer
+relay/                  Cloudflare Worker — релей к Groq (ключ живёт там)
 systemd/gul.service     автозапуск
 docs/                   план, архитектура, железо, умения Алисы
 tests/                  56 тестов без интернета и микрофона
@@ -406,7 +428,7 @@ bash scripts/test.sh
 | `Модель Vosk не найдена` | `bash scripts/download_models.sh` |
 | GigaChat 401 | проверьте `GIGACHAT_CLIENT_ID/SECRET` и `scope: GIGACHAT_API_PERS`; удалите `data/.gigachat_token.json` |
 | GigaChat SSL error | уже стоит `verify_ssl: false`; при желании установите сертификат НУЦ Минцифры |
-| Groq 403 | включите VPN и пропишите `network.proxy`; GigaChat работает и без него |
+| Groq 403 | это гео-блок РФ: поднимите релей по docs/GROQ.md или пропишите `network.proxy` |
 | Нет звука | `sudo apt install alsa-utils ffmpeg mpv`; проверьте `python run.py --say "проверка"` |
 | Музыка не играет | `sudo apt install mpv`; проверьте URL радиостанции |
 | Служба не слышит микрофон | `sudo usermod -aG audio $USER`, перезайдите/перезагрузитесь |
@@ -440,6 +462,7 @@ bash scripts/test.sh
 - [docs/ALICE_SKILLS.md](docs/ALICE_SKILLS.md) — полное сравнение умений с Алисой
 - [docs/LATENCY.md](docs/LATENCY.md) — бюджет задержки и способы её уменьшить
 - [docs/DEVBOX.md](docs/DEVBOX.md) — тестовый стенд на своём ПК и перенос на Acer
+- [docs/GROQ.md](docs/GROQ.md) — Groq первым мозгом: релей, прокси, лимиты
 
 ## Лицензия
 

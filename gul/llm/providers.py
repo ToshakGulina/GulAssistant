@@ -22,6 +22,7 @@ from typing import Any, Iterator
 
 import requests
 
+from .. import __version__
 from ..config import Config
 from ..utils import atomic_write_json, read_json
 from .base import ChatMessage, LLMError, LLMProvider, extract_error, iter_sse_content
@@ -29,18 +30,23 @@ from .base import ChatMessage, LLMError, LLMProvider, extract_error, iter_sse_co
 log = logging.getLogger(__name__)
 
 
+_UNSET = object()
+
+
 class _HttpProvider(LLMProvider):
     """Общая обвязка: сессия, прокси, таймауты, разбор ошибок."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, proxy: Any = _UNSET):
         self.cfg = cfg
-        self.proxy = cfg.get("network.proxy", "") or ""
+        # Прокси можно задать для конкретного провайдера; иначе — общий network.proxy.
+        # Релею (Cloudflare) прокси не нужен и только добавит задержку.
+        self.proxy = (cfg.get("network.proxy", "") or "") if proxy is _UNSET else str(proxy or "")
         self.timeout = float(cfg.get("network.timeout", 15))
         self.first_token_timeout = float(cfg.get("brain.first_token_timeout", 8))
         self.max_tokens = int(cfg.get("brain.max_tokens", 450))
         self.temperature = float(cfg.get("brain.temperature", 0.6))
         self.session = requests.Session()
-        self.session.headers.update({"User-Agent": "GulAssistant/1.0"})
+        self.session.headers.update({"User-Agent": f"GulAssistant/{__version__}"})
         if self.proxy:
             self.session.proxies.update({"http": self.proxy, "https": self.proxy})
 
@@ -201,14 +207,19 @@ class OpenAICompatProvider(_HttpProvider):
     """Groq, Cloudflare, локальные серверы и любые OpenAI-совместимые API."""
 
     def __init__(self, cfg: Config, name: str, title: str, base_url: str,
-                 api_key: str, model: str, extra_headers: dict | None = None):
-        super().__init__(cfg)
+                 api_key: str, model: str, extra_headers: dict | None = None,
+                 extra_params: dict | None = None, token_param: str = "max_tokens",
+                 proxy: Any = _UNSET):
+        super().__init__(cfg, proxy=proxy)
         self.name = name
         self.title = title
         self.base_url = (base_url or "").rstrip("/")
         self.api_key = api_key or ""
         self.model = model
         self.extra_headers = extra_headers or {}
+        self.extra_params = dict(extra_params or {})
+        self.token_param = token_param or "max_tokens"
+        self.mode = "direct"
 
     def available(self) -> bool:
         return bool(self.base_url and self.model and self.api_key)
@@ -233,22 +244,38 @@ class OpenAICompatProvider(_HttpProvider):
         except requests.RequestException as exc:
             raise LLMError(f"{self.title}: сеть недоступна ({exc.__class__.__name__})") from exc
 
-    def stream(self, system: str, messages: list[ChatMessage], **options: Any) -> Iterator[str]:
-        if not self.available():
-            raise LLMError(f"{self.title}: не настроен")
+    def _payload(self, system: str, messages: list[ChatMessage], stream: bool,
+                 options: dict) -> dict:
+        params = self._options(options)
+        max_tokens = params.pop("max_tokens", self.max_tokens)
         payload = {
             "model": options.get("model", self.model),
             "messages": [{"role": "system", "content": system}] + [
                 {"role": m.role, "content": m.content} for m in messages
             ],
-            "stream": True,
-            **self._options(options),
+            "stream": stream,
+            # Groq считает reasoning-токены в этом же лимите, поэтому имя
+            # параметра вынесено в конфиг (max_completion_tokens).
+            self.token_param: max_tokens,
+            **params,
+            **self.extra_params,
         }
-        resp = self._post(payload, stream=True)
+        return payload
+
+    def stream(self, system: str, messages: list[ChatMessage], **options: Any) -> Iterator[str]:
+        if not self.available():
+            raise LLMError(f"{self.title}: не настроен")
+        resp = self._post(self._payload(system, messages, True, options), stream=True)
+        if resp.status_code == 400 and self.extra_params:
+            # Провайдер не принял необязательные параметры (например, reasoning_effort
+            # для модели, которая его не поддерживает). Убираем и пробуем снова.
+            dropped = ", ".join(self.extra_params)
+            log.warning("%s: параметры %s не приняты, повторяю без них", self.title, dropped)
+            self.extra_params = {}
+            resp = self._post(self._payload(system, messages, True, options), stream=True)
         if resp.status_code in (400, 404, 422):
             # Некоторые бесплатные эндпоинты не умеют stream — пробуем без него.
-            payload["stream"] = False
-            resp = self._post(payload, stream=False)
+            resp = self._post(self._payload(system, messages, False, options), stream=False)
         if resp.status_code >= 400:
             raise LLMError(f"{self.title}: {extract_error(resp)}", status=resp.status_code)
         if resp.headers.get("content-type", "").startswith("application/json"):
@@ -263,6 +290,68 @@ class OpenAICompatProvider(_HttpProvider):
             yield chunk
         if not produced:
             raise LLMError(f"{self.title}: пустой ответ модели")
+
+
+class GroqProvider(OpenAICompatProvider):
+    """Groq (LPU) — самый быстрый бесплатный мозг.
+
+    Три режима, выбираются конфигом:
+      • прямой      — base_url api.groq.com + ключ (нужен VPN/прокси из РФ);
+      • через прокси — то же, но brain.groq.proxy или network.proxy;
+      • через релей — relay_url своего Cloudflare Worker, ключ Groq живёт
+        только в секретах Worker и на неттоп не попадает.
+
+    gpt-oss — reasoning-модель: thinking тратит и время, и лимит токенов.
+    Для голоса ставим reasoning_effort=low и не просим показывать рассуждения.
+    """
+
+    name = "groq"
+    title = "Groq (LPU)"
+
+    def __init__(self, cfg: Config):
+        section = dict((cfg.section("brain").get("groq", {}) or {}))
+        relay_url = str(section.get("relay_url") or "").strip().rstrip("/")
+        self.relay = bool(relay_url)
+        self.relay_token = str(section.get("relay_token") or "").strip()
+
+        model = str(section.get("model") or "openai/gpt-oss-20b")
+        extra = dict(section.get("extra_params") or {})
+        if model.startswith("openai/gpt-oss") or "gpt-oss" in model:
+            # Значения вне low/medium/high Groq отклоняет с 400.
+            extra.setdefault("reasoning_effort", "low")
+            extra.setdefault("include_reasoning", False)
+
+        if self.relay:
+            base_url = relay_url
+            # Клиент авторизуется в релее своим токеном, а не ключом Groq.
+            api_key = self.relay_token or str(section.get("api_key") or "") or "relay"
+            proxy: Any = section.get("proxy", "")
+            title = "Groq (через свой релей)"
+            mode = "relay"
+        else:
+            base_url = str(section.get("base_url") or "https://api.groq.com/openai/v1")
+            api_key = str(section.get("api_key") or "")
+            proxy = section.get("proxy", _UNSET)
+            title = "Groq (LPU)"
+            mode = "proxy" if (proxy not in (_UNSET, "", None) or cfg.get("network.proxy")) else "direct"
+
+        super().__init__(
+            cfg, "groq", title, base_url, api_key, model,
+            extra_params=extra,
+            token_param=str(section.get("token_param") or "max_completion_tokens"),
+            proxy=proxy,
+        )
+        self.mode = mode
+        self._relay_configured = self.relay
+
+    def available(self) -> bool:
+        if self.relay:
+            # Без токена релей тоже может быть открыт — тогда хватит URL и модели.
+            return bool(self.base_url and self.model)
+        return bool(self.base_url and self.model and self.api_key)
+
+    def info(self) -> dict:
+        return {"mode": self.mode, "model": self.model}
 
 
 class MockProvider(LLMProvider):
@@ -327,6 +416,7 @@ class MockProvider(LLMProvider):
             return "Я вас слушаю."
         return (
             "Сейчас я в демо-режиме и не могу рассуждать по-настоящему. "
-            f"Вы спросили: «{question.strip()}». Подключите бесплатный GigaChat в файле .env — "
-            "и я отвечу умно, коротко и по делу. Все бытовые команды при этом работают уже сейчас."
+            f"Вы спросили: «{question.strip()}». Подключите бесплатный Groq через свой "
+            "релей (docs/GROQ.md) или GigaChat в .env — и я отвечу умно, коротко и по делу. "
+            "Все бытовые команды при этом работают уже сейчас."
         )

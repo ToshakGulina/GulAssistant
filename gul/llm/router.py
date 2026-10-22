@@ -15,7 +15,7 @@ from typing import Any, Callable, Iterator
 from ..config import Config
 from ..metrics import Metrics, metrics as global_metrics
 from .base import ChatMessage, LLMError, LLMProvider
-from .providers import GigaChatProvider, MockProvider, OpenAICompatProvider
+from .providers import GigaChatProvider, GroqProvider, MockProvider, OpenAICompatProvider
 
 log = logging.getLogger(__name__)
 
@@ -49,12 +49,8 @@ class LLMRouter:
 
         groq = brain.get("groq", {}) or {}
         if groq.get("enabled", True):
-            factories["groq"] = lambda: OpenAICompatProvider(
-                self.cfg, "groq", "Groq (LPU)",
-                base_url=groq.get("base_url", "https://api.groq.com/openai/v1"),
-                api_key=groq.get("api_key", ""),
-                model=groq.get("model", "openai/gpt-oss-120b"),
-            )
+            # Режим (прямой / прокси / релей) выбирает сам провайдер.
+            factories["groq"] = lambda: GroqProvider(self.cfg)
 
         cf = brain.get("cloudflare", {}) or {}
         if cf.get("enabled", True):
@@ -111,17 +107,35 @@ class LLMRouter:
         self.last_provider = provider.name
         self._emit("provider_ok", {"provider": provider.name, "latency_ms": latency_ms})
 
+    @staticmethod
+    def _cooldown_for(exc: Exception) -> float:
+        """Сколько секунд не трогать провайдера после ошибки.
+
+        Геоблок и неверный ключ сами не пройдут — нет смысла дёргать их часто.
+        Лимит 429 отпускает за секунды-минуты, сеть — тоже.
+        """
+        status = getattr(exc, "status", None)
+        text = str(exc).lower()
+        if status in (401, 403):
+            return max(COOLDOWN_SECONDS, 300.0)
+        if status == 429:
+            return 45.0
+        if status == 404:
+            return 300.0
+        if "сеть недоступна" in text or "timeout" in text or "timed out" in text:
+            return 30.0
+        return float(COOLDOWN_SECONDS)
+
     def _mark_fail(self, provider: LLMProvider, exc: Exception) -> None:
+        cooldown = self._cooldown_for(exc)
         with self._lock:
             st = self._state(provider)
             st["failures"] += 1
             st["last_error"] = str(exc)[:300]
-            # Мягкие ошибки (нет ключа/геоблок 403) не лечим повтором каждые 90 с?
-            # Лечим: ключ могли добавить, VPN — включить.
             st["state"] = "error"
-            st["cooldown_until"] = time.time() + COOLDOWN_SECONDS
+            st["cooldown_until"] = time.time() + cooldown
         self.metrics.bump("fallbacks")
-        log.warning("Мозг %s недоступен: %s", provider.name, exc)
+        log.warning("Мозг %s недоступен: %s (пауза %.0f с)", provider.name, exc, cooldown)
         self._emit("provider_error", {"provider": provider.name, "error": str(exc)[:300]})
 
     def _emit(self, event: str, data: dict) -> None:
@@ -196,10 +210,18 @@ class LLMRouter:
             for provider in self.providers:
                 st = dict(self._state(provider))
                 cooldown = max(0, int(st.get("cooldown_until", 0) - now))
+                extra = {}
+                info = getattr(provider, "info", None)
+                if callable(info):
+                    try:
+                        extra = info() or {}
+                    except Exception:
+                        extra = {}
                 result.append({
                     "name": provider.name,
                     "title": provider.title,
                     "available": provider.available(),
+                    **extra,
                     "state": st.get("state"),
                     "calls": st.get("calls", 0),
                     "last_error": st.get("last_error", ""),

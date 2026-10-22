@@ -10,6 +10,7 @@
   python run.py --doctor        # полная диагностика стенда
   python run.py --mic-test      # записать 4 секунды и оценить микрофон
   python run.py --speaker-test  # проверить колонку настоящим TTS
+  python run.py --brain         # проверить мозги реальным запросом
   python run.py --bench         # измерить задержки
   python run.py --list-devices  # список микрофонов/колонок
 """
@@ -32,7 +33,7 @@ from gul import __version__
 from gul.assistant import Assistant
 from gul.audio import AudioPlayer, list_alsa_devices
 from gul.config import PROJECT_ROOT, Config, load_config
-from gul.doctor import doctor, mic_test, speaker_test
+from gul.doctor import brain_test, doctor, mic_test, speaker_test
 from gul.metrics import metrics
 from gul.server import EventBus, WebServer
 from gul.skills.timers import TimerManager
@@ -384,6 +385,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="проверить настройки и железо")
     parser.add_argument("--bench", action="store_true", help="измерить задержки")
     parser.add_argument("--doctor", action="store_true", help="полная диагностика стенда")
+    parser.add_argument("--brain", nargs="?", const="", metavar="ИМЯ",
+                        help="проверить мозги реальным запросом (можно указать groq/gigachat)")
     parser.add_argument("--mic-test", nargs="?", const=4.0, type=float, metavar="СЕК",
                         help="записать N секунд и оценить микрофон (по умолчанию 4)")
     parser.add_argument("--speaker-test", action="store_true", help="проверить колонку через TTS")
@@ -414,6 +417,8 @@ def main(argv: list[str] | None = None) -> int:
         return run_bench(cfg)
     if args.doctor:
         return doctor(cfg)
+    if args.brain is not None:
+        return brain_test(cfg, only=args.brain or None)
     if args.mic_test is not None:
         return mic_test(cfg, float(args.mic_test))
     if args.speaker_test:

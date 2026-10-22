@@ -262,13 +262,30 @@ def doctor(cfg: Config, network: bool = True) -> int:
     print("Мозги:")
     from gul.llm import ChatMessage, build_router
 
+    groq_cfg = cfg.section("brain").get("groq", {}) or {}
+    if groq_cfg.get("relay_url"):
+        print(f"  Groq через релей: {groq_cfg.get('relay_url')}")
+    elif groq_cfg.get("api_key"):
+        print(f"  Groq напрямую (прокси: {cfg.get('network.proxy') or 'нет'})")
     router = build_router(cfg)
     real: list = []
     for provider in router.providers:
         available = provider.available()
         if available and provider.name != "mock":
             real.append(provider)
-        _line(provider.name, available, provider.title)
+        info = {}
+        getter = getattr(provider, "info", None)
+        if callable(getter):
+            try:
+                info = getter() or {}
+            except Exception:
+                info = {}
+        details = provider.title
+        if info.get("mode"):
+            details += f" · {info['mode']}"
+        if info.get("model"):
+            details += f" · {info['model']}"
+        _line(provider.name, available, details)
     if real and network:
         provider = real[0]
         print(f"\n  Проверяю первый доступный мозг ({provider.name}) реальным запросом…")
@@ -316,6 +333,147 @@ def doctor(cfg: Config, network: bool = True) -> int:
         print(f"Итог: {problems} проблем(ы). Подсказки — выше, подробности — docs/HARDWARE.md.")
         return 1
     print("Итог: критических проблем нет. Можно говорить.")
+    return 0
+
+
+def explain_error(name: str, exc: Exception) -> list[str]:
+    """Человеческие подсказки к типовым ошибкам провайдеров."""
+    status = getattr(exc, "status", None)
+    text = str(exc).lower()
+    hints: list[str] = []
+
+    if status == 401:
+        hints.append("Ключ неверный или отозван — перевыпустите его в кабинете провайдера.")
+    elif status == 403:
+        if name == "groq":
+            hints.append(
+                "403 у Groq почти всегда означает гео-блок РФ. Варианты: "
+                "свой релей на Cloudflare (docs/GROQ.md), VPN/прокси в network.proxy, "
+                "или оставить основным GigaChat."
+            )
+        else:
+            hints.append("Доступ запрещён: проверьте ключ, тариф и регион.")
+    elif status == 429:
+        hints.append(
+            "Лимит бесплатного тарифа. Groq free: 30 запросов/мин, 1000/день, "
+            "8000 токенов/мин. Подождите или уменьшите brain.max_tokens и max_history_turns."
+        )
+    elif status == 404:
+        hints.append("Модель или путь не найдены — проверьте brain.<провайдер>.model и base_url.")
+    elif "сеть недоступна" in text or "timeout" in text or "timed out" in text:
+        hints.append(
+            "Сеть: проверьте интернет, прокси в network.proxy и доступность домена "
+            "(с телефона по мобильному интернету тоже стоит проверить)."
+        )
+    if name == "groq" and not hints:
+        hints.append("Проверьте ключ и доступность api.groq.com; для РФ нужен релей или прокси.")
+    return hints
+
+
+def _check_relay(relay_url: str) -> None:
+    """Проверить /health релея, не раскрывая токен."""
+    import requests
+
+    root = relay_url.split("/openai/v1")[0].rstrip("/")
+    try:
+        response = requests.get(f"{root}/health", timeout=6)
+        data = response.json() if response.headers.get("content-type", "").startswith("application/json") else {}
+    except Exception as exc:
+        print(f"Релей: недоступен ({exc.__class__.__name__}). Проверьте URL и доступность "
+              f"Cloudflare; запасной путь — VPN + прямой Groq.")
+        return
+    if response.status_code != 200:
+        print(f"Релей: HTTP {response.status_code} на /health — проверьте, что Worker задеплоен.")
+        return
+    if not data.get("key_configured"):
+        print("Релей: отвечает, но GROQ_API_KEY не задан в секретах Worker.")
+        return
+    protected = "токен требуется" if data.get("token_required") else "БЕЗ токена — задайте RELAY_TOKEN!"
+    print(f"Релей: OK ({protected})")
+
+
+def brain_test(cfg: Config, only: str | None = None, prompt: str = "Скажи ровно одно слово: привет") -> int:
+    """Проверить мозги реальным запросом: время до первого токена и диагноз."""
+    from gul.llm import ChatMessage, build_router
+
+    router = build_router(cfg)
+    order = cfg.get("brain.order") or []
+    print("Мозги Гуля")
+    print(f"Порядок: {' → '.join(order) or 'не задан'}")
+    groq = cfg.section("brain").get("groq", {}) or {}
+    if groq.get("relay_url"):
+        print(f"Groq: через релей {groq.get('relay_url')} (ключ Groq на этой машине не нужен)")
+        if not only or only == "groq":
+            _check_relay(str(groq.get("relay_url")))
+    elif cfg.get("network.proxy"):
+        print(f"Groq: напрямую через прокси {cfg.get('network.proxy')}")
+    else:
+        print("Groq: напрямую (из РФ вернёт 403 — нужен релей или прокси, см. docs/GROQ.md)")
+    print(f"Модель Groq: {groq.get('model', 'openai/gpt-oss-20b')}")
+    print()
+
+    providers = [p for p in router.providers if not only or p.name == only]
+    if only and not providers:
+        print(f"Провайдер «{only}» не включён. Доступные: "
+              + ", ".join(p.name for p in router.providers))
+        return 2
+
+    failures = 0
+    for provider in providers:
+        info = {}
+        getter = getattr(provider, "info", None)
+        if callable(getter):
+            try:
+                info = getter() or {}
+            except Exception:
+                info = {}
+        suffix = ""
+        if info.get("mode"):
+            suffix += f" · режим: {info['mode']}"
+        if info.get("model"):
+            suffix += f" · {info['model']}"
+
+        if not provider.available():
+            print(f"[—] {provider.title}{suffix}: не настроен (нет ключа/URL)")
+            continue
+
+        started = time.perf_counter()
+        answer = ""
+        first_ms = None
+        try:
+            for token in provider.stream(
+                "Отвечай максимально кратко.",
+                [ChatMessage("user", prompt)],
+                max_tokens=40, temperature=0.1,
+            ):
+                if first_ms is None:
+                    first_ms = (time.perf_counter() - started) * 1000
+                answer += token
+                if len(answer) > 80:
+                    break
+        except Exception as exc:
+            failures += 1
+            print(f"[!!] {provider.title}{suffix}: ошибка — {truncate(str(exc), 160)}")
+            for hint in explain_error(provider.name, exc):
+                print(f"     → {hint}")
+            continue
+
+        total_ms = (time.perf_counter() - started) * 1000
+        if not answer.strip():
+            failures += 1
+            print(f"[!!] {provider.title}{suffix}: пустой ответ (модель израсходовала "
+                  f"лимит на рассуждения — reasoning_effort уже low, попробуйте max_tokens больше)")
+            continue
+        first_text = f"{first_ms:.0f} мс" if first_ms is not None else "—"
+        print(f"[OK] {provider.title}{suffix}: первый токен {first_text}, всего {total_ms:.0f} мс")
+        print(f"     «{truncate(' '.join(answer.split()), 70)}»")
+
+    print()
+    if failures:
+        print(f"Итог: {failures} провайдер(ов) с ошибками. Гуль продолжит работать "
+              f"на следующем доступном мозге.")
+        return 1
+    print("Итог: все настроенные мозги ответили.")
     return 0
 
 

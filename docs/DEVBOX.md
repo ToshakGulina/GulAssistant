@@ -143,6 +143,7 @@ aplay /tmp/test.wav
 git clone https://github.com/ToshakGulina/GulAssistant.git
 cd GulAssistant
 bash scripts/install_testbox.sh
+bash scripts/quickstart.sh        # ключи, модель Vosk, проверка мозгов
 ```
 
 Скрипт поставит:
@@ -163,11 +164,15 @@ bash scripts/install_testbox.sh --service
 
 После установки **перезайдите в систему** (группы применяются при входе).
 
-```bash
-nano .env      # GIGACHAT_CLIENT_ID / GIGACHAT_CLIENT_SECRET
-```
+`quickstart.sh` спросит про Groq (релей или прямой ключ) и GigaChat, запишет
+`.env` с правами 600 и сразу прогонит `--brain` и `--doctor`.
 
-Ключ GigaChat бесплатный для физлица:
+Приоритет по умолчанию — **Groq**: он в 3–5 раз быстрее GigaChat. Из РФ прямой
+доступ закрыт, поэтому нужен свой релей на Cloudflare (5 минут, бесплатно,
+VPN не нужен) — см. `docs/GROQ.md`. Ключ Groq останется в секретах Worker,
+на неттоп он не попадёт.
+
+Если релея нет, работает GigaChat: бесплатный ключ для физлица —
 https://developers.sber.ru/portal/products/gigachat-api
 
 ---
@@ -243,6 +248,7 @@ bash scripts/emulate_acer.sh --net enp4s0 .venv/bin/python run.py --web
 | Проверка | Ожидание |
 |---|---|
 | `--doctor` | критических проблем нет; мозг отвечает |
+| `--brain groq` | первый токен < 1 с, ошибок нет |
 | `--mic-test 4` | речь > 20% кадров, клиппинг 0% |
 | `--speaker-test` | звук есть, движок назван |
 | `--bench` | TTS и LLM выдают числа, Vosk грузится |
